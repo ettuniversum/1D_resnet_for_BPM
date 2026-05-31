@@ -222,4 +222,7 @@ data/
 
 # Saved models/checkpoints
 models/*.pth
+models/*.onnx
+models/*.tflite
+models/saved_model/
 

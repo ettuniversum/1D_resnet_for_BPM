@@ -47,3 +47,169 @@ uv pip install -r requirements.txt scipy scikit-learn matplotlib
 # Run the preprocessing pipeline
 python src/data_processing.py
 ```
+
+---
+
+## Phase 2: Model Design & Training
+
+We designed a lightweight 10-layer 1D Residual Network (ResNet-1D) regression model suitable for mobile deployment. The model has `2,012,705` parameters and takes segmented, normalized PPG signals of shape `(batch_size, 1, 1000)` and outputs estimated BPM.
+
+### How to Train the Model:
+```bash
+# Run training on GPU (or fallback to CPU)
+python src/train.py --epochs 20 --batch_size 128 --lr 0.001 --device cuda
+```
+This saves the best-performing model checkpoint to `models/best_model.pth` and exports training curves to `models/loss_curves.png`.
+
+---
+
+## Phase 3: Model Export & Optimization
+
+To prepare the trained model for real-time inference on the Android "Wearout" application, we convert the PyTorch model to ONNX format and then to TensorFlow Lite (TFLite) format with **Post-Training INT8 Quantization**.
+
+### 1. Export PyTorch to ONNX
+Export the PyTorch model (`models/best_model.pth`) to static ONNX format (`models/resnet10_5gamers.onnx`):
+```bash
+python src/export_onnx.py
+```
+
+### 2. Convert ONNX to TFLite (FP32 & INT8 Quantized)
+First, convert the ONNX model to a TensorFlow `SavedModel` using `onnx2tf`. Then, compile it to FP32 and INT8-quantized TFLite formats:
+```bash
+python src/export_tflite.py
+```
+This script uses a representative dataset of 100 random windows from validation data (`val_x.npy`) to calibrate the activation ranges for INT8 quantization.
+
+### Model Size Comparison:
+*   **PyTorch Checkpoint:** `7.71 MB`
+*   **ONNX Model:** `7.68 MB`
+*   **TFLite FP32 Model:** `7.68 MB`
+*   **TFLite INT8 Quantized Model:** `1.97 MB` (~74% footprint reduction)
+
+---
+
+## Android Deployment Walkthrough
+
+Here is a step-by-step guide on how to integrate and run the quantized TFLite model inside the [WearoutAndroid](https://github.com/ettuniversum/WearoutAndroid) application.
+
+### Step 1: Place the Model File
+Copy the quantized model file `resnet10_5gamers_quant.tflite` from your models folder to your Android project's assets directory:
+```text
+app/src/main/assets/resnet10_5gamers_quant.tflite
+```
+
+### Step 2: Configure Dependencies
+Add the TensorFlow Lite dependencies to your app's `build.gradle` file:
+```groovy
+dependencies {
+    // TensorFlow Lite standard interpreter
+    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
+}
+```
+Ensure that `.tflite` files are not compressed by the build system. Add the following block to your `build.gradle`:
+```groovy
+android {
+    aaptOptions {
+        noCompress "tflite"
+    }
+}
+```
+
+### Step 3: Implement the TFLite Classifier in Kotlin
+Create a wrapper class to manage the model initialization, input/output buffer mapping, and inference execution:
+
+```kotlin
+import android.content.Context
+import android.content.res.AssetFileDescriptor
+import org.tensorflow.lite.Interpreter
+import java.io.FileInputStream
+import java.nio.channels.FileChannel
+import java.io.File
+
+class HeartRateEstimator(context: Context) {
+    private var interpreter: Interpreter? = null
+    
+    companion object {
+        private const val MODEL_NAME = "resnet10_5gamers_quant.tflite"
+        private const val INPUT_LENGTH = 1000
+    }
+
+    init {
+        val options = Interpreter.Options().apply {
+            // Optional: Use GPU delegate or multiple threads if supported
+            setNumThreads(2)
+        }
+        interpreter = Interpreter(loadModelFile(context, MODEL_NAME), options)
+    }
+
+    /**
+     * Loads the TFLite model from the assets directory.
+     */
+    private fun loadModelFile(context: Context, modelName: String): java.nio.MappedByteBuffer {
+        val fileDescriptor: AssetFileDescriptor = context.assets.openFd(modelName)
+        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
+        val fileChannel: FileChannel = inputStream.channel
+        val startOffset = fileDescriptor.startOffset
+        val declaredLength = fileDescriptor.declaredLength
+        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+    }
+
+    /**
+     * Estimates BPM from a 10-second preprocessed PPG signal window (1000 float samples).
+     * 
+     * @param ppgWindow Preprocessed (band-pass filtered & z-score normalized) signal array.
+     * @return Estimated BPM (float).
+     */
+    fun estimateBPM(ppgWindow: FloatArray): Float {
+        if (ppgWindow.size != INPUT_LENGTH) {
+            throw IllegalArgumentException("Input signal must have exactly $INPUT_LENGTH samples (10 seconds at 100Hz).")
+        }
+
+        // TFLite expects shape: [batch_size, sequence_length, channels] -> [1, 1000, 1]
+        // Create 3D input buffer: 1 batch, 1000 time steps, 1 channel
+        val inputBuffer = Array(1) { Array(INPUT_LENGTH) { FloatArray(1) } }
+        for (i in 0 until INPUT_LENGTH) {
+            inputBuffer[0][i][0] = ppgWindow[i]
+        }
+
+        // TFLite output expects shape: [batch_size, output_features] -> [1, 1]
+        val outputBuffer = Array(1) { FloatArray(1) }
+
+        // Run inference
+        interpreter?.run(inputBuffer, outputBuffer)
+
+        // Return regressed BPM
+        return outputBuffer[0][0]
+    }
+
+    /**
+     * Release TFLite resources when done.
+     */
+    fun close() {
+        interpreter?.close()
+        interpreter = null
+    }
+}
+```
+
+### Step 4: Run Inference in App Flow
+Within your BLE data processing service, collect 10-second segments of preprocessed data (at 100Hz), pass them to the estimator, and publish the resulting BPM to the UI:
+
+```kotlin
+// Initialize estimator (usually in onCreate or Service setup)
+val hrEstimator = HeartRateEstimator(applicationContext)
+
+// In your data flow handler:
+fun onNewWindowCollected(ppgData: FloatArray) {
+    // 1. Ensure data is filtered and normalized exactly as done during training (Z-Score)
+    // 2. Call the model
+    val estimatedBpm = hrEstimator.estimateBPM(ppgData)
+    
+    // 3. Update UI/Log results
+    Log.d("BPM_Inference", "Estimated Heart Rate: $estimatedBpm BPM")
+}
+
+// When clean up is needed (onDestroy)
+hrEstimator.close()
+```
+
