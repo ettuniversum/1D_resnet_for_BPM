@@ -220,3 +220,6 @@ __marimo__/
 # Project Data
 data/
 
+# Saved models/checkpoints
+models/*.pth
+
