@@ -6,3 +6,9 @@ torchaudio
 onnx
 onnxruntime
 tflite-support
+tensorflow
+onnx2tf
+onnx-graphsurgeon
+psutil
+sng4onnx
+tf-keras
