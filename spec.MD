@@ -18,13 +18,33 @@ Develop a 1D ResNet model in PyTorch to estimate heart rate (BPM) from Photoplet
 - **Model Optimization & Export:** Quantize and convert the trained PyTorch model to TFLite format suitable for mobile deployment.
 - **Hardware Integration:** Ensure the model output aligns with the requirements of the `Wearout` Android application receiving data from the ESP32 IoT chip.
 
-## 4. Pipeline
-1.  **Data Ingestion & Cleaning:** Load dataset, handle noise/artifacts, normalize signals.
-2.  **Model Training:** Define 1D ResNet architecture, train, and validate performance.
-3.  **Model Conversion:** Convert PyTorch model to ONNX, then to TFLite.
-4.  **Deployment:** Integrate the TFLite model into the `WearoutAndroid` project structure.
+## 4. Implementation Plan
 
-## 5. Directory Structure
+### Phase 1: Data Preparation
+- [ ] Implement robust data loader for Kaggle dataset.
+- [ ] Apply band-pass filtering to remove motion artifacts and high-frequency noise.
+- [ ] Segment PPG signals into windows (e.g., 5-10 seconds) with corresponding BPM labels.
+- [ ] Split data into training, validation, and test sets.
+
+### Phase 2: Model Design & Training
+- [ ] Define 1D ResNet architecture tailored for time-series regression.
+- [ ] Implement training loop with appropriate loss function (e.g., MSE or MAE).
+- [ ] Experiment with hyperparameter tuning (learning rate, batch size, kernel sizes).
+- [ ] Validate model performance against test set metrics (MAE, RMSE).
+
+### Phase 3: Optimization & Deployment
+- [ ] Convert PyTorch model to ONNX.
+- [ ] Perform TFLite conversion with quantization (int8) to minimize footprint for mobile.
+- [ ] Integrate TFLite model into the Android `Wearout` codebase.
+- [ ] Conduct end-to-end testing with real-time BLE input.
+
+## 5. Milestones
+1. **Data Pipeline Ready:** Successfully load, clean, and visualize sample PPG data.
+2. **Baseline Model:** Trained 1D ResNet achieving a defined performance metric (e.g., MAE < X BPM).
+3. **Model Exported:** Successfully converted PyTorch model to a functioning TFLite model.
+4. **Android Integration:** TFLite model running inference within the `WearoutAndroid` app.
+
+## 6. Directory Structure
 ```text
 /
 ├── data/           # Raw and processed datasets
