@@ -1,0 +1,8 @@
+pandas
+numpy
+torch
+torchvision
+torchaudio
+onnx
+onnxruntime
+tflite-support
